@@ -1,6 +1,8 @@
 # mscz-html
 A solution for actively displaying MuseScore projects on web pages like musescore.com
 
+Simple demo: https://carlgao4.github.io/mscz-html/develop/sample
+
 ## Usage
 
 1. Preparation:

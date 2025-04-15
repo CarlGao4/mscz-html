@@ -25,8 +25,8 @@ const bisect_right = (arr, x, lo = 0, hi = arr.length, key = (x) => x) => {
 let SpessaSynth_url_prefix = "https://cdn.jsdelivr.net/npm/spessasynth_lib@3.25.23/"
 
 let load_idx = 0;
-let sf3;
 let global_vars = new Object();
+let errormsg = "", candisplay = true, havemidi = true;
 
 let msczHtml = {
     ready: null,
@@ -37,16 +37,19 @@ let msczHtml = {
             return;
         }
         msczHtml.initializing = true;
-        const [WORKLET_URL_ABSOLUTE, Sequencer, Synthetizer] = await Promise.all([
+        await Promise.all([
             import(SpessaSynth_url_prefix + "synthetizer/worklet_wrapper/worklet_url.js").then(m => m.WORKLET_URL_ABSOLUTE),
             import(SpessaSynth_url_prefix + "sequencer/worklet_wrapper/sequencer.js").then(m => m.Sequencer),
             import(SpessaSynth_url_prefix + "synthetizer/worklet_wrapper/synthetizer.js").then(m => m.Synthetizer)
-        ]);
-        global_vars.Sequencer = Sequencer;
-        global_vars.Synthetizer = Synthetizer;
-        global_vars.WORKLET_URL_ABSOLUTE = WORKLET_URL_ABSOLUTE;
-
-        sf3 = await fetch("https://mscz-html.carlgao4.workers.dev/GeneralUserGS.sf3").then(response => response.arrayBuffer());
+        ]).then(o => {
+            global_vars.WORKLET_URL_ABSOLUTE = o[0];
+            global_vars.Sequencer = o[1];
+            global_vars.Synthetizer = o[2];
+        }).catch(error => {
+            console.error(`Error loading SpessaSynth modules: ${error.message}`);
+            errormsg = `Error loading SpessaSynth modules.`;
+            candisplay = false;
+        });
 
         msczHtml.isReady = true;
         console.log("msczHtml loaded successfully");
@@ -75,6 +78,7 @@ let msczHtml = {
      * Available options:
      * - `autoScroll`: A boolean indicating whether to enable auto-scrolling (default: true).
      * - `audio`: An array, all items in the array should be objects with `src`, `name` and optional `measures` attribute. `measures` should be an array of objects with `id` and `time` attributes. `id` starts from 0 and `time` is in seconds.
+     * - `soundfont`: A string (could be `GeneralUser` [default], `FluidR3_GM`, `MS Basic` or a URL to a soundfont file) or ArrayBuffer of a soundfont file.
      * 
      * @throws {Error} Throws an error if `cssSelector` is neither a string nor an HTMLElement.
      * @throws {Error} Throws an error if the specified HTML element cannot be found.
@@ -107,6 +111,11 @@ let msczHtml = {
             throw new Error(`Element with selector ${cssSelector} not found`);
         }
 
+        if (!candisplay) {
+            element.innerHTML = `<div class="mscz-error">${errormsg}</div>`;
+            return;
+        }
+
         let data;
         if (typeof jsonFile === "string") {
             const response = await fetch(jsonFile);
@@ -126,7 +135,7 @@ let msczHtml = {
         }
 
         // Construct the HTML string
-        let html = `<div class="mscz-player-controls">`;
+        let html = `<div class="mscz-player-controls" mscz-disabled>`;
         html += `<div class="mscz-player-controls-buttons">`;
         html += `<button class="mscz-button mscz-play-button"></button>`;
         html += `<button class="mscz-button mscz-pause-button"></button>`;
@@ -193,8 +202,39 @@ let msczHtml = {
         }
         times[0].sort((a, b) => a.time - b.time);
 
-        let midi_player;
-        let audio_players = [];
+        if (!config || !config.soundfont) {
+            config = config || {};
+            config.soundfont = "GeneralUser";
+        }
+        let soundfont_url = null, sf3;
+        if (config.soundfont === "GeneralUser") {
+            soundfont_url = "https://raw.githubusercontent.com/spessasus/SpessaSynth/refs/tags/v3.25.0/soundfonts/GeneralUserGS.sf3";
+        }
+        else if (config.soundfont === "FluidR3_GM") {
+            soundfont_url = "https://raw.githubusercontent.com/musescore/MuseScore/refs/tags/v2.1.0/share/sound/FluidR3Mono_GM.sf3";
+        }
+        else if (config.soundfont === "MS Basic") {
+            soundfont_url = "https://raw.githubusercontent.com/musescore/MuseScore/refs/tags/v4.0/share/sound/MS%20Basic.sf3";
+        }
+        else if (typeof config.soundfont === "string") {
+            soundfont_url = config.soundfont;
+        }
+        if (soundfont_url) {
+            sf3 = await fetch(soundfont_url).catch(error => {
+                console.error(`Error loading soundfont: ${error.message}`);
+                errormsg = `Error loading soundfont. No MIDI playback available.`;
+                havemidi = false;
+            }).then(response => response.arrayBuffer());
+        }
+        else if (config.soundfont instanceof ArrayBuffer) {
+            sf3 = config.soundfont;
+        }
+        else {
+            throw new Error(`Invalid soundfont type: ${typeof config.soundfont}.`);
+        }
+
+        let midi_player, loaded = false;
+        let audio_players = [midi_player];
         if (config && config.audio) {
             for (let i = 0; i < config.audio.length; i++) {
                 const audio = config.audio[i];
@@ -219,6 +259,67 @@ let msczHtml = {
             }
         }
 
+        element.querySelector(".mscz-track-select").onchange = () => {
+            let track_id = parseInt(element.querySelector("select").value);
+            for (let i = 0; i < audio_players.length; i++) {
+                if (audio_players[i] && !audio_players[i].paused) {
+                    audio_players[i].pause();
+                }
+            }
+            if (track_id > 0 && !audio_players[track_id].src) {
+                audio_players[track_id].src = config.audio[track_id - 1].src;
+            }
+            for (let i of element.querySelectorAll(".mscz-measure-overlay")) {
+                i.removeAttribute("time");
+                i.classList.remove("mscz-measure-overlay-current");
+            }
+            for (let i of times[track_id]) {
+                var measure_element = element.querySelector(`#mscz-measure-${currentId}-${i.id}`);
+                if (measure_element && !measure_element.hasAttribute("time")) {
+                    measure_element.setAttribute("time", i.time);
+                }
+            }
+        }
+
+        const slider = element.querySelector("input[type=range]");
+        const setCurrentTime = (time) => {
+            let track_id = parseInt(element.querySelector("select").value);
+            element.querySelector(".mscz-player-controls-time").innerText = `${numberToTime(time)} / ${numberToTime(audio_players[track_id].duration)}`;
+            // Only adjust the slider if it is not active
+            if (!slider.matches(':active')) {
+                slider.value = time * 10;
+                if (audio_players[track_id]) {
+                    slider.setAttribute("max", audio_players[track_id].duration * 10);
+                }
+            }
+            let times_current = times[track_id];
+            let idx = bisect_right(times_current, time, 0, times_current.length, (x) => x.time) - 1;
+            if (idx >= 0) {
+                let measure_element = element.querySelector(`#mscz-measure-${currentId}-${times_current[idx].id}`);
+                if (measure_element) {
+                    if (!measure_element.classList.contains("mscz-measure-overlay-current")) {
+                        let measure_elements = element.querySelectorAll(".mscz-measure-overlay-current");
+                        for (let i = 0; i < measure_elements.length; i++) {
+                            measure_elements[i].classList.remove("mscz-measure-overlay-current");
+                        }
+                        measure_element.classList.add("mscz-measure-overlay-current");
+                        if (element.querySelector(".mscz-player-scroll input").checked) {
+                            measure_element.scrollIntoView({ behavior: "smooth", block: "center" });
+                        }
+                    }
+                }
+            }
+        }
+        const adjustCurrentTime = (time) => {
+            let track_id = parseInt(element.querySelector("select").value);
+            audio_players[track_id].currentTime = time;
+            for (let i = 0; i < audio_players.length; i++) {
+                if (audio_players[i] && i != track_id && !audio_players[i].paused) {
+                    audio_players[i].pause();
+                }
+            }
+        }
+
         const midiData = atob(data.midi);
         const midi_byteNumbers = new Array(midiData.length);
         for (let i = 0; i < midiData.length; i++) {
@@ -226,47 +327,19 @@ let msczHtml = {
         }
         const midi_byteArray = new Uint8Array(midi_byteNumbers);
         const midi_arrayBuffer = midi_byteArray.buffer;
+        element.querySelector(".mscz-player-controls").removeAttribute("mscz-disabled");
         element.querySelector(".mscz-play-button").addEventListener("click", async () => {
-            if (!midi_player) {
-                element.querySelector("select").value = "0";
-                let context = new AudioContext();
-                await context.audioWorklet.addModule(new URL(SpessaSynth_url_prefix + global_vars.WORKLET_URL_ABSOLUTE));
-                let synth = new global_vars.Synthetizer(context.destination, sf3);
-                midi_player = new global_vars.Sequencer([{
-                    binary: midi_arrayBuffer,
-                    altName: "midi",
-                }], synth);
-                audio_players.unshift(midi_player);
-                const slider = element.querySelector("input[type=range]");
-                const setCurrentTime = (time) => {
-                    let track_id = parseInt(element.querySelector("select").value);
-                    element.querySelector(".mscz-player-controls-time").innerText = `${numberToTime(time)} / ${numberToTime(audio_players[track_id].duration)}`;
-                    // Only adjust the slider if it is not active
-                    if (!slider.matches(':active')) {
-                        slider.value = time * 10;
-                        slider.setAttribute("max", audio_players[track_id].duration * 10);
-                    }
-                    let times_current = times[track_id];
-                    let idx = bisect_right(times_current, time, 0, times_current.length, (x) => x.time) - 1;
-                    if (idx >= 0) {
-                        let measure_element = element.querySelector(`#mscz-measure-${currentId}-${times_current[idx].id}`);
-                        if (measure_element) {
-                            if (!measure_element.classList.contains("mscz-measure-overlay-current")) {
-                                let measure_elements = element.querySelectorAll(".mscz-measure-overlay-current");
-                                for (let i = 0; i < measure_elements.length; i++) {
-                                    measure_elements[i].classList.remove("mscz-measure-overlay-current");
-                                }
-                                measure_element.classList.add("mscz-measure-overlay-current");
-                                if (element.querySelector(".mscz-player-scroll input").checked) {
-                                    measure_element.scrollIntoView({ behavior: "smooth", block: "center" });
-                                }
-                            }
-                        }
-                    }
-                }
-                const adjustCurrentTime = (time) => {
-                    let track_id = parseInt(element.querySelector("select").value);
-                    audio_players[track_id].currentTime = time;
+            if (!loaded) {
+                element.querySelector(".mscz-player-controls").setAttribute("mscz-disabled", "");
+                if (sf3) {
+                    let context = new AudioContext();
+                    await context.audioWorklet.addModule(new URL(SpessaSynth_url_prefix + global_vars.WORKLET_URL_ABSOLUTE));
+                    let synth = new global_vars.Synthetizer(context.destination, sf3);
+                    midi_player = new global_vars.Sequencer([{
+                        binary: midi_arrayBuffer,
+                        altName: "midi",
+                    }], synth);
+                    audio_players[0] = midi_player;
                 }
                 slider.onchange = () => {
                     adjustCurrentTime(slider.value / 10);
@@ -276,45 +349,39 @@ let msczHtml = {
                         adjustCurrentTime(i.getAttribute("time"));
                     }
                 }
-                element.querySelector(".mscz-track-select").onchange = () => {
-                    let track_id = parseInt(element.querySelector("select").value);
-                    for (let i = 0; i < audio_players.length; i++) {
-                        audio_players[i].pause();
-                    }
-                    if (track_id > 0) {
-                        audio_players[track_id].src = config.audio[track_id - 1].src;
-                    }
-                    for (let i of element.querySelectorAll(".mscz-measure-overlay")) {
-                        i.removeAttribute("time");
-                        i.classList.remove("mscz-measure-overlay-current");
-                    }
-                    for (let i of times[track_id]) {
-                        var measure_element = element.querySelector(`#mscz-measure-${currentId}-${i.id}`);
-                        if (measure_element && !measure_element.hasAttribute("time")) {
-                            measure_element.setAttribute("time", i.time);
-                        }
-                    }
-                }
                 setInterval(() => {
                     let track_id = parseInt(element.querySelector("select").value);
-                    setCurrentTime(audio_players[track_id].currentTime);
+                    if (audio_players[track_id] && !audio_players[track_id].paused) {
+                        setCurrentTime(audio_players[track_id].currentTime);
+                    }
                 }, 100);
-
+                loaded = true;
             }
             let track_id = parseInt(element.querySelector("select").value);
-            audio_players[track_id].play();
+            if (audio_players[track_id]) {
+                audio_players[track_id].play();
+            }
+            element.querySelector(".mscz-player-controls").removeAttribute("mscz-disabled");
         });
         element.querySelector(".mscz-pause-button").addEventListener("click", () => {
-            if (!midi_player) { return };
+            if (!loaded) { return };
             for (let i = 0; i < audio_players.length; i++) {
-                audio_players[i].pause();
+                if (audio_players[i] && !audio_players[i].paused) {
+                    audio_players[i].pause();
+                }
             }
         });
         element.querySelector(".mscz-back-button").addEventListener("click", () => {
-            if (!midi_player) { return };
+            if (!loaded) { return };
             for (let i = 0; i < audio_players.length; i++) {
-                audio_players[i].currentTime = 0;
-                audio_players[i].pause();
+                if (audio_players[i]) {
+                    audio_players[i].currentTime = 0;
+                    audio_players[i].pause();
+                }
+            }
+            let track_id = parseInt(element.querySelector("select").value);
+            if (audio_players[track_id]) {
+                setCurrentTime(0);
             }
         });
     }

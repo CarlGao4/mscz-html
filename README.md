@@ -64,3 +64,9 @@ Here are the available keys:
     - `measures`: An optional array of measure times. If not provided, will use the same as the MIDI file. The measure times should be an array of objects with the following keys:
         - `id`: The index of the measure. Start from 0. A same measure can be mapped to multiple times, just by adding multiple objects with the same `id`.
         - `time`: The time when the measure starts. The time is in seconds.
+
+### `soundfont`
+
+- Type: `string` or `ArrayBuffer`
+- Default: `GeneralUser`
+- Description: The soundfont to use for rendering the MIDI file. You can use a custom soundfont by providing the URL of the soundfont file, or the builtin soundfont name. You may use `GeneralUser`, `FluidR3_GM`, `MS Basic`. You can also pass an ArrayBuffer of the soundfont file directly. The soundfont file should be in SF2 or SF3 format.

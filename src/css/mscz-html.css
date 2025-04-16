@@ -120,18 +120,22 @@
     padding-bottom: var(--mscz-page-padding);
 }
 
-.mscz-svg-image {
+.mscz-image-box {
+    border: var(--mscz-page-border-width) solid #aaa;
+    position: relative;
     width: calc(100% - var(--mscz-page-padding) * 2);
-    height: auto;
-    max-width: calc(100% - var(--mscz-page-padding) * 2);
-    max-height: calc(100% - var(--mscz-page-padding) * 2);
-    margin: 0 calc(var(--mscz-page-padding) - var(--mscz-page-border-width));
     display: block;
     border: var(--mscz-page-border-width) solid #aaa;
+    margin: 0 calc(var(--mscz-page-padding) - var(--mscz-page-border-width));
+}
+
+.mscz-svg-image {
+    width: 100%;
+    height: 100%;
+    display: block;
 }
 
 .mscz-image-container {
-    position: relative;
     padding: calc(var(--mscz-page-padding) - var(--mscz-page-border-width)) 0 0 0;
 }
 

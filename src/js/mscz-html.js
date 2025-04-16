@@ -1,5 +1,9 @@
 // msczHtml.js
 
+if (typeof window === "undefined") {
+    throw new Error("This module is intended to be run in a browser environment.");
+}
+
 const numberToTime = (number) => {
     const hours = Math.floor(number / 3600);
     const minutes = Math.floor((number % 3600) / 60);
@@ -22,11 +26,105 @@ const bisect_right = (arr, x, lo = 0, hi = arr.length, key = (x) => x) => {
     return lo;
 }
 
+// Modified from https://www.w3.org/TR/png/#D-CRCAppendix
+let crc_table = new Uint32Array(256);
+for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) {
+        c = (c & 1) ? (0xedb88320 ^ (c >>> 1)) : (c >>> 1);
+    }
+    crc_table[n] = c >>> 0;
+}
+/**
+ * Updates the CRC value with the given buffer.
+ * @param {Uint8Array} buf - The data buffer to update the CRC with.
+ * @param {Uint32Array} crc - The initial CRC value (default: 0xffffffff).
+ * 
+ * @returns {Uint32Array} The updated CRC value.
+ */
+const crc32 = (buf, crc = new Uint32Array([0xffffffff])) => {
+    let c = new Uint32Array([crc[0]]);
+    for (let n = 0; n < buf.length; n++) {
+        c[0] = crc_table[(c[0] ^ buf[n]) & 0xff] ^ (c[0] >>> 8);
+    }
+    return new Uint32Array([c[0] ^ 0xffffffff]);
+}
+
+/**
+ * Gets the DPI (dots per inch) of a PNG image.
+ * @function get_png_dpi
+ * @param {ArrayBuffer} png - The PNG image data as an ArrayBuffer.
+ * 
+ * @returns {number[]} An array containing the X DPI and Y DPI of the PNG image.
+ * @throws {Error} Throws an error if the PNG data is invalid or if the DPI cannot be determined.
+ */
+const get_png_dpi = (png) => {
+    const pngHeader = new Uint8Array(png, 0, 8);
+    if (pngHeader[0] !== 0x89 || pngHeader[1] !== 0x50 || pngHeader[2] !== 0x4E || pngHeader[3] !== 0x47 ||
+        pngHeader[4] !== 0x0D || pngHeader[5] !== 0x0A || pngHeader[6] !== 0x1A || pngHeader[7] !== 0x0A) {
+        throw new Error("Invalid PNG data");
+    }
+    const pngData = new Uint8Array(png);
+    let pos = 8;
+    while (true) {
+        if (pos + 12 > pngData.length) {
+            throw new Error("PNG data is too short");
+        }
+        let chunk_length = 0, chunk_type = "", chunk_data = null;
+        for (let i = 0; i < 4; i++) {
+            chunk_length = (chunk_length << 8) | pngData[pos++];
+        }
+        for (let i = 0; i < 4; i++) {
+            chunk_type += String.fromCharCode(pngData[pos++]);
+        }
+        chunk_data = pngData.slice(pos, pos + chunk_length);
+        if (pos + chunk_length + 4 > pngData.length) {
+            throw new Error("Invalid PNG data length");
+        }
+        // Calculate CRC
+        let crc = crc32(pngData.slice(pos - 4, pos + chunk_length))[0];
+        pos += chunk_length;
+        if ((crc >>> 0) !== ((pngData[pos] << 24 | pngData[pos + 1] << 16 | pngData[pos + 2] << 8 | pngData[pos + 3]) >>> 0)) {
+            throw new Error("Invalid PNG CRC");
+        }
+        pos += 4;
+        if (chunk_type === "pHYs") {
+            if (chunk_length !== 9) {
+                throw new Error("Invalid pHYs chunk length");
+            }
+            const x_dpm = chunk_data[0] << 24 | chunk_data[1] << 16 | chunk_data[2] << 8 | chunk_data[3];
+            const y_dpm = chunk_data[4] << 24 | chunk_data[5] << 16 | chunk_data[6] << 8 | chunk_data[7];
+            const unit = chunk_data[8];
+            if (unit !== 1) {
+                throw new Error("pHYs unit is not defined as meters");
+            }
+            return [x_dpm * 0.0254, y_dpm * 0.0254]; // Convert to inches
+        }
+        if (chunk_type === "IEND") {
+            break; // End of PNG data
+        }
+    }
+    throw new Error("No pHYs chunk found in PNG data");
+}
+
+const hex_to_uint8 = (hex) => {
+    hex = hex.replace(/ /g, "");
+    hex = hex.replace(/0[xX]/g, "");
+    if (hex.length % 2 !== 0) {
+        hex = "0" + hex;
+    }
+    const arr = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < hex.length; i += 2) {
+        arr[i / 2] = parseInt(hex.substr(i, 2), 16);
+    }
+    return arr;
+}
+
 let SpessaSynth_url_prefix = "https://cdn.jsdelivr.net/npm/spessasynth_lib@3.25.23/"
 
 let load_idx = 0;
 let global_vars = new Object();
-let errormsg = "", candisplay = true, havemidi = true;
+let errormsg = "", candisplay = true;
 
 let msczHtml = {
     ready: null,
@@ -79,6 +177,7 @@ let msczHtml = {
      * - `autoScroll`: A boolean indicating whether to enable auto-scrolling (default: true).
      * - `audio`: An array, all items in the array should be objects with `src`, `name` and optional `measures` attribute. `measures` should be an array of objects with `id` and `time` attributes. `id` starts from 0 and `time` is in seconds.
      * - `soundfont`: A string (could be `GeneralUser` [default], `FluidR3_GM`, `MS Basic` or a URL to a soundfont file) or ArrayBuffer of a soundfont file.
+     * - `exportDpi`: A number of DPI for exporting images (default: 330). To set this parameter, you need to add `-r [DPI]` to the command line when running you convert the mscz file to json. If not set, will try to read from pngs in the json file. If not found, will use 330.
      * 
      * @throws {Error} Throws an error if `cssSelector` is neither a string nor an HTMLElement.
      * @throws {Error} Throws an error if the specified HTML element cannot be found.
@@ -164,15 +263,45 @@ let msczHtml = {
         for (const svg of data.svgs) {
             const singleImgContainer = document.createElement('div');
             singleImgContainer.classList.add('mscz-image-container');
+            const singleImgBox = document.createElement('div');
+            singleImgBox.classList.add('mscz-image-box');
             const img = document.createElement('img');
             img.src = `data:image/svg+xml;base64,${svg}`;
             img.classList.add('mscz-svg-image');
-            singleImgContainer.appendChild(img);
+            singleImgContainer.appendChild(singleImgBox);
+            singleImgBox.appendChild(img);
             picElements.appendChild(singleImgContainer);
             const parsedSvg = new DOMParser().parseFromString(atob(svg), "image/svg+xml");
             svg_viewPorts.push(parsedSvg.querySelector("svg").viewBox.baseVal);
         }
 
+        if (!config || !config.exportDpi) {
+            config = config || {};
+            config.exportDpi = 330;
+            if (data.pngs) {
+                for (const png of data.pngs) {
+                    try {
+                        const pngData = atob(png);
+                        const pngByteNumbers = new Array(pngData.length);
+                        for (let i = 0; i < pngData.length; i++) {
+                            pngByteNumbers[i] = pngData.charCodeAt(i);
+                        }
+                        const pngByteArray = new Uint8Array(pngByteNumbers);
+                        const pngArrayBuffer = pngByteArray.buffer;
+                        const dpi = get_png_dpi(pngArrayBuffer);
+                        if (dpi[0] !== dpi[1]) {
+                            continue;
+                        }
+                        config.exportDpi = dpi[0];
+                        break;
+                    } catch (error) {
+                        console.error(`Error getting DPI from PNG: ${error.message}`);
+                        errormsg = `Error getting DPI from PNG. Defaulting to 330.`;
+                    }
+                }
+            }
+        }
+        let posRatio = config.exportDpi / 30;
         // Load mposXML
         const mposXML = atob(data.mposXML);
         const parser = new DOMParser();
@@ -180,17 +309,17 @@ let msczHtml = {
         for (const measure of xmlDoc.getElementsByTagName("element")) {
             const measure_element = document.createElement('div');
             const measure_page = parseInt(measure.getAttribute("page"));
-            const measure_x = parseFloat(measure.getAttribute("x")) / 11;
-            const measure_y = parseFloat(measure.getAttribute("y")) / 11;
-            const measure_width = parseFloat(measure.getAttribute("sx")) / 11;
-            const measure_height = parseFloat(measure.getAttribute("sy")) / 11;
+            const measure_x = parseFloat(measure.getAttribute("x")) / posRatio;
+            const measure_y = parseFloat(measure.getAttribute("y")) / posRatio;
+            const measure_width = parseFloat(measure.getAttribute("sx")) / posRatio;
+            const measure_height = parseFloat(measure.getAttribute("sy")) / posRatio;
             measure_element.classList.add('mscz-measure-overlay');
-            measure_element.style.left = `calc(${measure_x / svg_viewPorts[measure_page].width} * calc(100% - var(--mscz-page-padding) * 2) + var(--mscz-page-padding))`;
-            measure_element.style.top = `calc(${measure_y / svg_viewPorts[measure_page].height} * calc(100% - var(--mscz-page-padding)) + var(--mscz-page-padding))`;
-            measure_element.style.width = `calc(${measure_width / svg_viewPorts[measure_page].width} * calc(100% - var(--mscz-page-padding) * 2))`;
-            measure_element.style.height = `calc(${measure_height / svg_viewPorts[measure_page].height} * calc(100% - var(--mscz-page-padding)))`;
+            measure_element.style.left = `${measure_x / svg_viewPorts[measure_page].width * 100}%`;
+            measure_element.style.top = `${measure_y / svg_viewPorts[measure_page].height * 100}%`;
+            measure_element.style.width = `${measure_width / svg_viewPorts[measure_page].width * 100}%`;
+            measure_element.style.height = `${measure_height / svg_viewPorts[measure_page].height * 100}%`;
             measure_element.id = `mscz-measure-${currentId}-${measure.getAttribute("id")}`;
-            picElements.childNodes[measure_page].appendChild(measure_element);
+            picElements.childNodes[measure_page].childNodes[0].appendChild(measure_element);
         }
         let times = [[]];
         for (const measure of xmlDoc.getElementsByTagName("event")) {
@@ -223,7 +352,6 @@ let msczHtml = {
             sf3 = await fetch(soundfont_url).catch(error => {
                 console.error(`Error loading soundfont: ${error.message}`);
                 errormsg = `Error loading soundfont. No MIDI playback available.`;
-                havemidi = false;
             }).then(response => response.arrayBuffer());
         }
         else if (config.soundfont instanceof ArrayBuffer) {
@@ -387,10 +515,15 @@ let msczHtml = {
     }
 };
 
-msczHtml.init();
-
-if (typeof window !== "undefined") {
+const loadModule = () => {
+    msczHtml.init();
     window.msczHtml = msczHtml;
+}
+
+if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", loadModule);
+} else {
+    loadModule();
 }
 
 export default msczHtml;

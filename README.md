@@ -70,3 +70,9 @@ Here are the available keys:
 - Type: `string` or `ArrayBuffer`
 - Default: `GeneralUser`
 - Description: The soundfont to use for rendering the MIDI file. You can use a custom soundfont by providing the URL of the soundfont file, or the builtin soundfont name. You may use `GeneralUser`, `FluidR3_GM`, `MS Basic`. You can also pass an ArrayBuffer of the soundfont file directly. The soundfont file should be in SF2 or SF3 format.
+
+### `exportDpi`
+
+- Type: `number`
+- Default: `330`
+- Description: A number of DPI for exporting images (default: 330). To set this parameter, you need to add `-r [DPI]` to the command line when running you convert the mscz file to json. If not set, will try to read from pngs in the json file. If not found, will use 330.

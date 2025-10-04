@@ -5,26 +5,14 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MSCZ-HTML Sample Page</title>
-    <link rel="stylesheet" href="../src/css/mscz-html.css">
 </head>
 
 <body>
-    <div style="border:solid 2px #888;max-width:1200px;margin:0 auto">
-        <div style="padding:.6em">
-            <h1>MSCZ-HTML Sample Page</h1>
-            <p>This is a sample page to demonstrate the use of MSCZ-HTML. <a href="https://musescore.com/official_scores/scores/6946977">Click here to view original score on musescore.com</a></p>
-        </div>
-        <div mscz-html="Love_Story.json" mscz-config="{&quot;audio&quot;:[{&quot;src&quot;:&quot;https://mscz-html.carlgao4.workers.dev/Love_Story.m4a&quot;,&quot;name&quot;:&quot;Love Story.m4a&quot;}]}">
-            <h2 style="padding: 1em">Page loading...</h2>
-        </div>
-    </div>
-    <!-- <div id="mscz-html"></div> -->
-    <script src="../src/js/mscz-html.js" type="module"></script>
-    <script>
-        // Manually load the JSON file
-        // Assuming that you have the JSON file in the same directory as this HTML file and want to display it in the div with id "mscz-html"
-        // const msczHtmlDisplayer = msczHtml.displayMsczJson("#mscz-html", "Love_Story.json");
-    </script>
+    <h1>MSCZ-HTML Sample Page List</h1>
+    <ul>
+        <li><a href="Love_Story.html">Love Story</a></li>
+        <li><a href="Detective_CONAN_Main_Theme.html">Detective CONAN Main Theme</a></li>
+    </ul>
 </body>
 
 </html>

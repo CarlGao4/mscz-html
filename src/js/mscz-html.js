@@ -120,7 +120,7 @@ const hex_to_uint8 = (hex) => {
     return arr;
 }
 
-let SpessaSynth_url_prefix = "https://cdn.jsdelivr.net/npm/spessasynth_lib@3.25.23/"
+let SpessaSynth_url_prefix = "https://cdn.jsdelivr.net/npm/spessasynth_lib@4.0.11/"
 
 let load_idx = 0;
 let global_vars = new Object();
@@ -135,14 +135,9 @@ let msczHtml = {
             return;
         }
         msczHtml.initializing = true;
-        await Promise.all([
-            import(SpessaSynth_url_prefix + "synthetizer/worklet_wrapper/worklet_url.js").then(m => m.WORKLET_URL_ABSOLUTE),
-            import(SpessaSynth_url_prefix + "sequencer/worklet_wrapper/sequencer.js").then(m => m.Sequencer),
-            import(SpessaSynth_url_prefix + "synthetizer/worklet_wrapper/synthetizer.js").then(m => m.Synthetizer)
-        ]).then(o => {
-            global_vars.WORKLET_URL_ABSOLUTE = o[0];
-            global_vars.Sequencer = o[1];
-            global_vars.Synthetizer = o[2];
+        await import(SpessaSynth_url_prefix + "dist/index.js/+esm").then(m => [m.Sequencer, m.WorkletSynthesizer]).then(o => {
+            global_vars.Sequencer = o[0];
+            global_vars.WorkletSynthesizer = o[1];
         }).catch(error => {
             console.error(`Error loading SpessaSynth modules: ${error.message}`);
             errormsg = `Error loading SpessaSynth modules.`;
@@ -461,12 +456,15 @@ let msczHtml = {
                 element.querySelector(".mscz-player-controls").setAttribute("mscz-disabled", "");
                 if (sf3) {
                     let context = new AudioContext();
-                    await context.audioWorklet.addModule(new URL(SpessaSynth_url_prefix + global_vars.WORKLET_URL_ABSOLUTE));
-                    let synth = new global_vars.Synthetizer(context.destination, sf3);
-                    midi_player = new global_vars.Sequencer([{
+                    await context.audioWorklet.addModule(new URL(SpessaSynth_url_prefix + "dist/spessasynth_processor.min.js"));
+                    let synth = new global_vars.WorkletSynthesizer(context);
+                    synth.connect(context.destination);
+                    await synth.soundBankManager.addSoundBank(sf3, "main");
+                    midi_player = new global_vars.Sequencer(synth);
+                    midi_player.loadNewSongList([{
                         binary: midi_arrayBuffer,
                         altName: "midi",
-                    }], synth);
+                    }]);
                     audio_players[0] = midi_player;
                 }
                 slider.onchange = () => {
